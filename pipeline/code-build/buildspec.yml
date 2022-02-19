@@ -13,7 +13,6 @@ phases:
   post_build:
     commands:
       - cp target/*.jar app.jar
-      - cp infra/pipeline/code-deploy/* .
       - echo Build completed on `date`
 artifacts:
   files:

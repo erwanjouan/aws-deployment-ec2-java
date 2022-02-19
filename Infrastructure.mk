@@ -3,7 +3,7 @@
 # CodeDeployDefault.HalfAtATime : Deploys to up to half of the instances at a time (with fractions rounded down). The overall deployment succeeds if the application revision is deployed to at least half of the instances (with fractions rounded up). Otherwise, the deployment fails. In the example of nine instances, it deploys to up to four instances at a time. The overall deployment succeeds if deployment to five or more instances succeed. Otherwise, the deployment fails.
 # CodeDeployDefault.OneAtATime	: Default method applied. Deploys the application revision to only one instance at a time. For deployment groups that contain more than one instance: The overall deployment succeeds if the application revision is deployed to all of the instances. The exception to this rule is that if deployment to the last instance fails, the overall deployment still succeeds. This is because CodeDeploy allows only one instance at a time to be taken offline with the CodeDeployDefault.OneAtATime configuration. The overall deployment fails as soon as the application revision fails to be deployed to any but the last instance. In an example using nine instances, it deploys to one instance at a time. The overall deployment succeeds if deployment to the first eight instances is successful. The overall deployment fails if deployment to any of the first eight instances fails. For deployment groups that contain only one instance, the overall deployment is successful only if deployment to the single instance is successful.
 
-DeploymentConfigName:=CodeDeployDefault.OneAtATime
+DeploymentConfigName:=CodeDeployDefault.HalfAtATime
 ASGMinSize:= 4
 ASGMaxSize:= 8
 
@@ -12,6 +12,9 @@ init:
 	PROJECT_VERSION=$$(./infra/utils/get_mvn_project_version.sh) && \
 	INIT_BUCKET_NAME=$${PROJECT_NAME}-init && \
 	mvn clean && \
+	cp infra/pipeline/code-build/buildspec.yml . && \
+	cp infra/pipeline/code-deploy/appspec.yml . && \
+	cp infra/pipeline/code-deploy/*.sh . && \
 	zip -r $${PROJECT_NAME}.zip * && \
 	aws s3 mb s3://$${INIT_BUCKET_NAME} &&\
 	aws s3 cp $${PROJECT_NAME}.zip s3://$${INIT_BUCKET_NAME}/init/ && \

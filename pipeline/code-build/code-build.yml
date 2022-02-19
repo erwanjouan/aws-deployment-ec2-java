@@ -55,7 +55,6 @@ Resources:
       ServiceRole: !Ref CodeBuildRole
       Source:
         Type: CODEPIPELINE
-        BuildSpec: infra/pipeline/code-build/buildspec.yml
       SourceVersion: main
       Artifacts:
         Type: CODEPIPELINE
