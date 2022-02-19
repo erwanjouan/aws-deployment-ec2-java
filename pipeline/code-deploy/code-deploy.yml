@@ -1,0 +1,55 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: A Java SpringBoot application deployed to EC2 with CodeDeploy, S3
+Parameters:
+  ProjectName:
+    Type: String
+  ProjectVersion:
+    Type: String
+  TargetGroupName:
+    Type: String
+  AutoScalingGroupName:
+    Type: String
+  DeploymentConfigName:
+    Type: String
+Resources:
+
+  CodeDeployer:
+    Properties:
+      Description: Provides CodeDeploy service access to expand tags and interact with Auto Scaling on your behalf.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: codedeploy.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+      Path: /
+    Type: AWS::IAM::Role
+
+  CodeDeployApplication:
+    Properties:
+      ApplicationName: !Ref ProjectName
+    Type: AWS::CodeDeploy::Application
+
+  CodeDeployDeploymentGroup:
+    Properties:
+      ApplicationName: !Ref ProjectName
+      ServiceRoleArn: !GetAtt CodeDeployer.Arn
+      DeploymentConfigName: !Ref DeploymentConfigName
+      DeploymentGroupName: !Ref ProjectName
+      DeploymentStyle:
+        DeploymentOption: WITH_TRAFFIC_CONTROL # unless LoadBalancerInfo is ignored
+        DeploymentType: IN_PLACE
+      LoadBalancerInfo:
+        TargetGroupInfoList:
+          - Name: !Ref TargetGroupName
+      AutoScalingGroups:
+        - Ref: AutoScalingGroupName
+    Type: AWS::CodeDeploy::DeploymentGroup
+Outputs:
+  CodeDeployApplication:
+    Value: !Ref 'CodeDeployApplication'
+  CodeDeployGroup:
+    Value: !Ref 'CodeDeployDeploymentGroup'

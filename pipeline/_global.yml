@@ -1,0 +1,58 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Global deployment template with nested stacks for Spring boot application on EC2
+Parameters:
+  ProjectName:
+    Type: String
+  ProjectVersion:
+    Type: String
+  ArtifactInitBucketName:
+    Type: String
+  DeploymentConfigName:
+    Type: String
+  ASGMinSize:
+    Type: Number
+  ASGMaxSize:
+    Type: Number
+Resources:
+  CodeBuildStack:
+    Properties:
+      TemplateURL: !Sub 'https://${ArtifactInitBucketName}.s3.eu-west-1.amazonaws.com/cloudformation/code-build/code-build.yml'
+      Parameters:
+        ProjectName: !Ref 'ProjectName'
+        ProjectVersion: !Ref 'ProjectVersion'
+    Type: AWS::CloudFormation::Stack
+  InfrastructureStack:
+    Properties:
+      TemplateURL: !Sub 'https://${ArtifactInitBucketName}.s3.eu-west-1.amazonaws.com/cloudformation/infrastructure.yml'
+      Parameters:
+        ProjectName: !Ref 'ProjectName'
+        ProjectVersion: !Ref 'ProjectVersion'
+        ASGMinSize: !Ref ASGMinSize
+        ASGMaxSize: !Ref ASGMaxSize
+    Type: AWS::CloudFormation::Stack
+  CodeDeployStack:
+    Properties:
+      TemplateURL: !Sub 'https://${ArtifactInitBucketName}.s3.eu-west-1.amazonaws.com/cloudformation/code-deploy/code-deploy.yml'
+      Parameters:
+        ProjectName: !Ref 'ProjectName'
+        ProjectVersion: !Ref 'ProjectVersion'
+        TargetGroupName: !GetAtt [ InfrastructureStack, Outputs.TargetGroupName ]
+        AutoScalingGroupName:  !GetAtt [ InfrastructureStack, Outputs.AutoScalingGroupName ]
+        DeploymentConfigName: !Ref DeploymentConfigName
+    Type: AWS::CloudFormation::Stack
+  CodePipelineStack:
+    Properties:
+      TemplateURL: !Sub 'https://${ArtifactInitBucketName}.s3.eu-west-1.amazonaws.com/cloudformation/code-pipeline/code-pipeline.yml'
+      Parameters:
+        ProjectName: !Ref 'ProjectName'
+        ProjectVersion: !Ref 'ProjectVersion'
+        ArtifactOutputBucketName: !GetAtt [ CodeBuildStack, Outputs.ArtifactOutputBucket ]
+        ArtifactInitBucketName: !Ref ArtifactInitBucketName
+        CodeDeployApplication: !GetAtt [ CodeDeployStack, Outputs.CodeDeployApplication ]
+        CodeDeployGroup: !GetAtt [ CodeDeployStack, Outputs.CodeDeployGroup ]
+    Type: AWS::CloudFormation::Stack
+Outputs:
+  LoadBalanderDNSName:
+    Value: !GetAtt [ InfrastructureStack, Outputs.LoadBalanderDNSName ]
+  ProjectPipeline:
+    Value: !GetAtt [ CodePipelineStack, Outputs.ProjectPipeline ]

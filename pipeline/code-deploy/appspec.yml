@@ -1,0 +1,18 @@
+version: 0.0
+os: linux
+files:
+  - source: app.jar
+    destination: /tmp
+hooks:
+  BeforeInstall:
+    - location: install-deps.sh
+      timeout: 180
+      runas: root
+  ApplicationStart:
+    - location: start.sh
+      timeout: 180
+      runas: root
+  ApplicationStop:
+    - location: stop.sh
+      timeout: 180
+      runas: root

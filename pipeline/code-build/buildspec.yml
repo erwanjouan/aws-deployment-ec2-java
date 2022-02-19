@@ -1,0 +1,28 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      java: corretto11
+    commands:
+      - java -version
+  build:
+    commands:
+      - echo Build started on `date`
+      - mvn clean install
+  post_build:
+    commands:
+      - cp target/*.jar app.jar
+      - cp infra/pipeline/code-deploy/* .
+      - echo Build completed on `date`
+artifacts:
+  files:
+    - app.jar
+    - appspec.yml
+    - install-deps.sh
+    - start.sh
+    - stop.sh
+  discard-paths: yes
+cache:
+  paths:
+    - '/root/.m2/**/*'

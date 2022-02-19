@@ -1,0 +1,116 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: A Java SpringBoot application deployed on EC2 with CodePipeline, S3
+Parameters:
+  ProjectName:
+    Type: String
+  ProjectVersion:
+    Type: String
+  ArtifactOutputBucketName:
+    Type: String
+  ArtifactInitBucketName:
+    Type: String
+  CodeDeployApplication:
+    Type: String
+  CodeDeployGroup:
+    Type: String
+  BranchName:
+    Type: String
+    Default: main
+Resources:
+  CodePipelineRole:
+    Description: Role for CodePipeline
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AWSCodePipeline_FullAccess'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonS3FullAccess'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess'
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Resource: "*"
+                Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                  - iam:PassRole
+              - Resource: "*"
+                Effect: Allow
+                Action:
+                  - codedeploy:CreateDeployment
+                  - codedeploy:CreateDeploymentGroup
+                  - codedeploy:GetApplication
+                  - codedeploy:GetApplicationRevision
+                  - codedeploy:GetDeployment
+                  - codedeploy:GetDeploymentConfig
+                  - codedeploy:RegisterApplicationRevision
+              - Resource: "*"
+                Effect: Allow
+                Action:
+                  - codecommit:*
+      RoleName: !Sub 'code-pipeline-role-${ProjectName}'
+    Type: AWS::IAM::Role
+  ProjectPipeline:
+    Description: Creating a deployment pipeline for your project in AWS CodePipeline
+    Properties:
+      Name: !Sub '${ProjectName}-${ProjectVersion}'
+      RoleArn: !GetAtt 'CodePipelineRole.Arn'
+      ArtifactStore:
+        Location: !Ref 'ArtifactOutputBucketName'
+        Type: S3
+      Stages:
+        - Name: SourceStage
+          Actions:
+          - Name: CodeCommit
+            ActionTypeId:
+              Category: Source
+              Owner: AWS
+              Provider: CodeCommit
+              Version: 1
+            OutputArtifacts:
+              -  Name: !Ref 'ArtifactInitBucketName'
+            Configuration:
+              BranchName: !Ref BranchName
+              RepositoryName: !Ref ProjectName
+              PollForSourceChanges: false
+            Namespace: GitVariables
+        - Name: BuildStage
+          Actions:
+          - Name: CodeBuild
+            ActionTypeId:
+              Category: Build
+              Owner: AWS
+              Provider: CodeBuild
+              Version: 1
+            Configuration:
+              ProjectName: !Ref 'ProjectName'
+            InputArtifacts:
+              - Name: !Ref 'ArtifactInitBucketName'
+            OutputArtifacts:
+              - Name: !Sub '${ProjectName}-zip'
+        - Name: DeployStage
+          Actions:
+          - Name: CodeDeploy
+            ActionTypeId:
+              Category: Deploy
+              Owner: AWS
+              Provider: CodeDeploy
+              Version: 1
+            Configuration:
+              ApplicationName: !Ref CodeDeployApplication
+              DeploymentGroupName: !Ref CodeDeployGroup
+            InputArtifacts:
+              - Name: !Sub '${ProjectName}-zip'
+    Type: AWS::CodePipeline::Pipeline
+Outputs:
+  ProjectPipeline:
+    Value: !Ref ProjectPipeline

@@ -1,0 +1,23 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Initial elements for a Java SpringBoot application deployed with EC2 with CodeBuild/Deploy/Pipeline
+Parameters:
+  ProjectName:
+    Type: String
+  ProjectVersion:
+    Type: String
+  ArtifactInputBucketName:
+    Type: String
+Resources:
+  CodeCommitRepo:
+    Properties:
+      Code:
+        BranchName: main
+        S3:
+          Bucket: !Ref ArtifactInputBucketName
+          Key: !Sub 'init/${ProjectName}.zip'
+      RepositoryDescription: !Ref ProjectName
+      RepositoryName: !Ref ProjectName
+    Type: AWS::CodeCommit::Repository
+Outputs:
+  CodeCommitRepo:
+    Value: !Ref CodeCommitRepo

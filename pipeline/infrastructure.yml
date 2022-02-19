@@ -1,0 +1,411 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: A Java SpringBoot application deployed with EC2 with CodeBuild/Deploy/Pipeline
+Parameters:
+  ProjectName:
+    Type: String
+  ProjectVersion:
+    Type: String
+  ApplicationPort:
+    Type: String
+    Default: 8080
+  AlbPort:
+    Type: String
+    Default: 80
+  ASGMinSize:
+    Type: Number
+  ASGMaxSize:
+    Type: Number
+  AmiId:
+    Type: String
+    Default: ami-0d1bf5b68307103c2
+  KeyName:
+    Type: String
+    Default: eksworkshop
+  InstanceType:
+    Type: String
+    Default: t2.small
+
+Resources:
+
+  ##########################
+  # Network
+  ##########################
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: default
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.0.3.0/24
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      MapPublicIpOnLaunch: false
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.0.4.0/24
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      MapPublicIpOnLaunch: false
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.0.0.0/24
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      MapPublicIpOnLaunch: false
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.0.1.0/24
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      MapPublicIpOnLaunch: false
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  GatewayToInternet:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayToInternet
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn: NatPublicIP
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      AllocationId: !GetAtt NatPublicIP.AllocationId
+
+  NatPublicIP:
+    Type: AWS::EC2::EIP
+    DependsOn: VPC
+    Properties:
+      Domain: vpc
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      NatGatewayId: !Ref NatGateway
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  ##########################
+  # ALB
+  ##########################
+
+  ALBSecurityGroup:
+    Properties:
+      GroupDescription: allow access to ALB from internet
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref AlbPort
+          ToPort: !Ref AlbPort
+          CidrIp: 0.0.0.0/0
+    Type: AWS::EC2::SecurityGroup
+
+  ApplicationLoadBalancer:
+    Properties:
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '30'
+      Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2] # Should be public
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+
+  ALBListener:
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn:
+        Ref: ApplicationLoadBalancer
+      Port: !Ref AlbPort
+      Protocol: HTTP
+    Type: AWS::ElasticLoadBalancingV2::Listener
+
+  ALBTargetGroup:
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      UnhealthyThresholdCount: 2
+      HealthyThresholdCount: 2
+      HealthCheckPath: /actuator/health
+      Port: !Ref ApplicationPort
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 5
+    DependsOn: ApplicationLoadBalancer
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+
+  ###################
+  # AutoScalingGroup
+  ###################
+
+  AutoScalingGroup:
+    Properties:
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      MinSize:
+        Ref: ASGMinSize
+      MaxSize:
+        Ref: ASGMaxSize
+      LaunchConfigurationName:
+        Ref: SpringBootLaunchConfig
+      #VPCZoneIdentifier: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+      VPCZoneIdentifier: [!Ref PublicSubnet1, !Ref PublicSubnet2] # Should be public
+      TargetGroupARNs:
+        - Ref: ALBTargetGroup
+      Tags:
+        - Key: Name
+          Value: !Ref ProjectName
+          PropagateAtLaunch: true
+        - Key: Version
+          Value: !Ref ProjectVersion
+          PropagateAtLaunch: true
+    Type: AWS::AutoScaling::AutoScalingGroup
+
+  SpringBootLaunchConfig:
+    Properties:
+      AssociatePublicIpAddress: true
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      KeyName:
+        Ref: KeyName
+      SecurityGroups:
+        - Ref: WebappSecurityGroup
+      IamInstanceProfile:
+        Ref: WebappInstanceProfile
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash -xe
+
+          ## Code Deploy Agent Bootstrap Script##
+
+          exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+          AUTOUPDATE=false
+
+          function installdep(){
+
+          if [ ${PLAT} = "ubuntu" ]; then
+
+            apt-get -y update
+            # Satisfying even ubuntu older versions.
+            apt-get -y install jq awscli ruby2.0 || apt-get -y install jq awscli ruby
+
+          elif [ ${PLAT} = "amz" ]; then
+            yum -y update
+            yum install -y aws-cli ruby jq
+
+          fi
+
+          }
+
+          function platformize(){
+
+          #Linux OS detection#
+           if hash lsb_release; then
+             echo "Ubuntu server OS detected"
+             export PLAT="ubuntu"
+
+
+          elif hash yum; then
+            echo "Amazon Linux detected"
+            export PLAT="amz"
+
+           else
+             echo "Unsupported release"
+             exit 1
+
+           fi
+          }
+
+
+          function execute(){
+
+          if [ ${PLAT} = "ubuntu" ]; then
+
+            cd /tmp/
+            wget https://aws-codedeploy-${REGION}.s3.amazonaws.com/latest/install
+            chmod +x ./install
+
+            if ./install auto; then
+              echo "Instalation completed"
+                if ! ${AUTOUPDATE}; then
+                      echo "Disabling Auto Update"
+                      sed -i '/@reboot/d' /etc/cron.d/codedeploy-agent-update
+                      chattr +i /etc/cron.d/codedeploy-agent-update
+                      rm -f /tmp/install
+                fi
+              exit 0
+            else
+              echo "Instalation script failed, please investigate"
+              rm -f /tmp/install
+              exit 1
+            fi
+
+          elif [ ${PLAT} = "amz" ]; then
+
+            cd /tmp/
+            wget https://aws-codedeploy-${REGION}.s3.amazonaws.com/latest/install
+            chmod +x ./install
+
+              if ./install auto; then
+                echo "Instalation completed"
+                  if ! ${AUTOUPDATE}; then
+                      echo "Disabling auto update"
+                      sed -i '/@reboot/d' /etc/cron.d/codedeploy-agent-update
+                      chattr +i /etc/cron.d/codedeploy-agent-update
+                      rm -f /tmp/install
+                  fi
+                exit 0
+              else
+                echo "Instalation script failed, please investigate"
+                rm -f /tmp/install
+                exit 1
+              fi
+
+          else
+            echo "Unsupported platform ''${PLAT}''"
+          fi
+
+          }
+
+          platformize
+          installdep
+          REGION=$(curl -s 169.254.169.254/latest/dynamic/instance-identity/document | jq -r ".region")
+          execute
+    Type: AWS::AutoScaling::LaunchConfiguration
+
+  WebappSecurityGroup:
+    Properties:
+      GroupDescription: allow access to Webapp from ALB
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0 # bad
+          #SourceSecurityGroupId:
+          #  Ref: ALBSecurityGroup
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+    Type: AWS::EC2::SecurityGroup
+
+  Ec2CodeDeployRole:
+    Properties:
+      Description: Provides full access to CodeDeploy resources.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: ec2.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCodeDeployFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Path: /
+    Type: "AWS::IAM::Role"
+
+  WebappInstanceProfile:
+    Properties:
+      Roles:
+        - !Ref Ec2CodeDeployRole
+    Type: AWS::IAM::InstanceProfile
+
+  ###############
+  # VPC Endpoints
+  ###############
+
+  VPCEndpointSecurityGroup:
+    Description: Security Group to allow use of VPC Endpoints. https://docs.aws.amazon.com/AmazonECR/latest/userguide/vpc-endpoints.html
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: "Security group to allow use of VPC Endpoints."
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          Description: HTTPS
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.0.0.0/0
+    Type: AWS::EC2::SecurityGroup
+
+  # Enables CloudWatch logging.
+  LogsVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.logs
+      VpcId: !Ref VPC
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+Outputs:
+  LoadBalancerName:
+    Value: !GetAtt 'ApplicationLoadBalancer.LoadBalancerName'
+  LoadBalanderDNSName:
+    Value: !GetAtt 'ApplicationLoadBalancer.DNSName'
+  TargetGroupName:
+    Value: !GetAtt 'ALBTargetGroup.TargetGroupName'
+  AutoScalingGroupName:
+    Value: !Ref 'AutoScalingGroup'

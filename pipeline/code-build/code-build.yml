@@ -1,0 +1,77 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: A Java SpringBoot application built on EC2 with CodeBuilt, CodeCommit and S3
+Parameters:
+  ProjectName:
+    Type: String
+  ProjectVersion:
+    Type: String
+
+Resources:
+  ArtifactOutputBucket:
+    Description: Bucket for output
+    Properties:
+      BucketName: !Sub '${ProjectName}-output'
+    Type: AWS::S3::Bucket
+  CodeBuildRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: codebuild.amazonaws.com
+          Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: allow-to-push-to-S3
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:List*
+                Resource:
+                  - !Sub "arn:aws:s3:::${ArtifactOutputBucket}"
+                  - !Sub "arn:aws:s3:::${ArtifactOutputBucket}/*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:DescribeLogStreams
+                  - logs:GetLogEvents
+                  - logs:PutLogEvents
+                  - logs:PutRetentionPolicy
+                Resource: "arn:aws:logs:*"
+              - Effect: Allow
+                Action: codecommit:GitPull
+                Resource: '*'
+    Type: AWS::IAM::Role
+
+  CodeBuildJavaProject:
+    DependsOn: CodeBuildRole
+    Properties:
+      Name: !Ref ProjectName
+      ServiceRole: !Ref CodeBuildRole
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: infra/pipeline/code-build/buildspec.yml
+      SourceVersion: main
+      Artifacts:
+        Type: CODEPIPELINE
+        OverrideArtifactName: true
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/java:openjdk-11
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: GIT_COMMIT_ID
+            Type: PLAINTEXT
+            Value: '#{GitVariables.CommitId}'
+      Cache:
+        Location: !Sub '${ArtifactOutputBucket}/cache'
+        Type: S3
+    Type: AWS::CodeBuild::Project
+Outputs:
+  ArtifactOutputBucket:
+    Value: !Ref ArtifactOutputBucket
